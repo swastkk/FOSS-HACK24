@@ -2,7 +2,7 @@
 
 # Recursive Image Grid Display for Kitty Terminal
 
-![alt text](./kitty.png)
+![alt text](./assets/kitty.png)
 
 ## Project Proposal
 
@@ -57,7 +57,7 @@ Implement a feature for Kitty terminal that allows recursive display of images i
 - Use arrow keys for navigation and 'q' for quitting
 - Highlight the currently selected image
 
-![alt text](./kitty-images.jpeg)
+![alt text](./assets/kitty-images.jpeg)
 
 ## Project Structure
 
@@ -78,3 +78,4 @@ Implement a feature for Kitty terminal that allows recursive display of images i
 This structure organizes the project into logical components, separating concerns and making the codebase more maintainable. Each file focuses on a specific aspect of the functionality, allowing for easier development, testing, and future enhancements.
 
 This README provides a technical overview of the project, key features, and a basic implementation plan. The reference code snippets demonstrate how we can approach the main components of the project using Go.
+cd
