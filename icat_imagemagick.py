@@ -23,10 +23,26 @@ def resize_image(image_path, output_path, width, height):
     command = ['magick', image_path, '-resize', f'{width}x{height}!', output_path]
     subprocess.run(command, check=True)
 
-def render_image(image_path, cell_width, cell_height, x, y):
-    command = ['kitty', 'icat', '--place',
-               f'{cell_width}x{cell_height}@{x}x{y}', '--align', 'left', image_path]
+# def render_image(image_path, cell_width, cell_height, x, y):
+#    command = ['kitty', 'icat', '--place',
+#               f'{cell_width}x{cell_height}@{x}x{y}', '--align', 'left', image_path]
+#    subprocess.run(command, check=True)
+
+# def render_image(image_path, cell_width, cell_height, x, y):
+#     command = ['kitty', '+kitten', 'icat', '--place',
+#                f'{cell_width}x{cell_height}@{x}x{y}', '--align', 'left', image_path]
+#     subprocess.run(command, check=True)
+
+def render_image(image_path, term_cols, term_rows, x, y):
+    command = [
+        'kitty',
+        '+kitten', 'icat',
+        '--place', f'{term_cols}x{term_rows}@{x}x{y}',
+        '--transfer-mode', 'stream',
+        '--', image_path
+    ]
     subprocess.run(command, check=True)
+
 
 def print_grid_with_images(rows, cols, image_paths, term_cols, term_rows, offset_y):
     num_images = len(image_paths)
