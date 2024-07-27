@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+    "io/fs"
 
 	"github.com/eiannone/keyboard"
 	"github.com/nfnt/resize"
@@ -52,11 +53,10 @@ type Config struct {
 }
 
 var (
-	recursive bool
-	maxImages int
     globalWindowParameters windowParameters // Contains Global Level Window Parameters 
     globalConfig Config
     globalNavigation navigationParameters
+    globalImages []string 
 )
 
 func init() {
@@ -121,25 +121,20 @@ func isImage(fileName string) bool {
 }
 
 // findImages recursively searches for image files in the given directory
-func discoverImages(dir string) ([]string, error) {
-	var images []string
-
-	err := filepath.Walk(dir, func(path string, info os.DirEntry, err error) error {
+func discoverImages(dir string) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-
-		if !info.IsDir() && isImage(info.Name()) {
+		if !d.IsDir() && isImage(d.Name()) {
 			images = append(images, path)
 		}
 		return nil
 	})
-
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error walking directory: %w", err)
 	}
-
-	return images, nil
+	return nil
 }
 
 // Resizes images, return  
@@ -221,6 +216,11 @@ func readKeyboardInput(navParams *navigationParameters, wg *sync.WaitGroup) {
 	}
 }
 
+func paginateImages(images []string) {
+    var xParam int = globalConfig.gridParam.x_param
+    var yParam int = globalConfig.gridParam.y_param
+}
+
 // Routine for session - kitten will run in this space
 func session(cmd *cobra.Command, args []string) {
 
@@ -232,7 +232,7 @@ func session(cmd *cobra.Command, args []string) {
 
 	// Get directory name and discover images
 	dir := args[0]
-	images, err := discoverImages(dir)
+	err := discoverImages(dir)
 	if err != nil {
 		fmt.Printf("Error discovering images: %v\n", err)
 		os.Exit(1)
@@ -271,7 +271,9 @@ func session(cmd *cobra.Command, args []string) {
   
     var config Config
 
-    // Load system configuration from kitty.conf 
+    /* Load system configuration from kitty.conf
+    Currently, the loadConfig is loading configurations from config.yaml, parsing can be updated later 
+    */ 
     err = loadConfig("config.yaml")
     if (err != nil) {
         fmt.Printf("Error Parsing config file, exiting ....")
@@ -285,17 +287,17 @@ func session(cmd *cobra.Command, args []string) {
     }
 
     // config cannot be changed at runtime 
-	err = renderImageGrid(images, gridConfig)
-	if err != nil {
-		fmt.Printf("Error rendering image grid: %v\n", err)
-		os.Exit(1)
-	}
+	//err = renderImageGrid(images, gridConfig)
+	//if err != nil {
+	//	fmt.Printf("Error rendering image grid: %v\n", err)
+	//	os.Exit(1)
+	//}
 
-	err = handleNavigation(images, layout)
-	if err != nil {
-		fmt.Printf("Error during navigation: %v\n", err)
-		os.Exit(1)
-	}
+	//err = handleNavigation(images, layout)
+	//if err != nil {
+	//	fmt.Printf("Error during navigation: %v\n", err)
+	//	os.Exit(1)
+	//}
 }
 
 func main() {
