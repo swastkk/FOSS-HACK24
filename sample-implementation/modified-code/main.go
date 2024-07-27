@@ -28,7 +28,7 @@ var rootCmd = &cobra.Command{
 }
 
 type gridConfig struct {
-    x_param int `yaml:"xParam"`     // horizontal parameter  
+    x_param int `yaml:"xParam"`    // horizontal parameter  
     y_param int `yaml:"yParam"`    // vertical parameter 
 }
 
@@ -42,7 +42,6 @@ type windowParameters struct {
 
 // Will contain Global Navigation 
 type navigationParameters struct {
-    imageIndex int // Selected image index  
     x int          // Horizontal Grid Coordinate 
     y int          // Vertical Grid Coordinate 
 }
@@ -57,12 +56,8 @@ var (
     globalConfig Config
     globalNavigation navigationParameters
     globalImages []string 
+    globalImagePages [][]string 
 )
-
-func init() {
-	rootCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Scan directory recursively")
-	rootCmd.Flags().IntVarP(&maxImages, "max-images", "n", 100, "Maximum number of images to display")
-}
 
 // This function takes globalConfig struct and parses the YAML data 
 func loadConfig(filename string) error {
@@ -127,7 +122,7 @@ func discoverImages(dir string) error {
 			return err
 		}
 		if !d.IsDir() && isImage(d.Name()) {
-			images = append(images, path)
+			globalImages = append(globalImages, path)
 		}
 		return nil
 	})
@@ -216,9 +211,24 @@ func readKeyboardInput(navParams *navigationParameters, wg *sync.WaitGroup) {
 	}
 }
 
-func paginateImages(images []string) {
+// Paginate images into slice called globalImagePages from globalImages
+func paginateImages() {
     var xParam int = globalConfig.gridParam.x_param
     var yParam int = globalConfig.gridParam.y_param
+
+    for i := 0; i < len(globalImages); i += xParam {
+        end := i + xParam
+        if end > len(globalImages) {
+            end = len(globalImages)
+        }
+        
+        row := globalImages[i:end]
+        globalImagePages = append(globalImagePages, row)
+        
+        if len(globalImagePages) == yParam {
+            break
+        }
+    }
 }
 
 // Routine for session - kitten will run in this space
