@@ -4,17 +4,26 @@ import (
 	"fmt"
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
+    "github.com/nfnt/resize"
+    "image"
+    "image/png"
 	"os"
 	"os/signal"
 	"syscall"
     "path/filepath"
 	"strings"
+    "encoding/base64"
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "icat [directory]",
 	Short: "Kitten to display images in a grid layout in Kitty terminal",
 	Run:   session,
+}
+
+type gridConfig struct {
+    x_param int     // horizontal parameter  
+    y_param int     // vertical parameter 
 }
 
 // Will contain all the window parameters 
@@ -25,10 +34,18 @@ type windowParameters struct {
 	yPixel uint16
 }
 
+// Will contain Global Navigation 
+type navigationParameters struct {
+    imageIndex int // Selected image index  
+    x int          // Horizontal Grid Coordinate 
+    y int          // Vertical Grid Coordinate 
+}
+
 var (
 	recursive bool
 	maxImages int
     globalWindowParameters windowParameters // Contains Global Level Window Parameters 
+    globalGridConfig gridConfig
 )
 
 func init() {
@@ -37,7 +54,7 @@ func init() {
 }
 
 // Gets the window size and modifies the globalWindowParameters (global struct) 
-func getWindowSize(window windowParameters) err {
+func getWindowSize(window windowParameters) error {
 	var err error
 	var f *os.File
 
@@ -98,6 +115,40 @@ func discoverImages(dir string) ([]string, error) {
 	return images, nil
 }
 
+// Resizes images, return  
+func resizeImage(img image.Image, width, height uint) image.Image {
+    return resize.Resize(width, height, img, resize.Lanczos3)
+}
+
+func imageToBase64(img image.Image) (string, error) {
+    var buf strings.Builder
+    err := png.Encode(&buf, img)
+    if err != nil {
+        return "", err
+    }
+    encoded := base64.StdEncoding.EncodeToString([]byte(buf.String()))
+    return encoded, nil
+}
+
+func loadImage(filePath string) (image.Image, error) {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return nil, err
+    }
+    defer file.Close()
+
+    img, _, err := image.Decode(file)
+    if err != nil {
+        return nil, err
+    }
+    return img, nil
+}
+
+// Print image to Kitty Terminal 
+func printImageToKitty(encoded string, width, height int) {
+    fmt.Printf("\x1b_Gf=1,t=%d,%d;x=%s\x1b\\", width, height, encoded)
+}
+
 // Routine for session - kitten will run in this space
 func session(cmd *cobra.Command, args []string) {
 
@@ -133,9 +184,9 @@ func session(cmd *cobra.Command, args []string) {
 		}
 	}()
 
-	layout := calculateGridLayout(len(images), width, height)
+    // Till this point, WindowSize Changes would be handled and stored into globalWindowParameters 
 
-	err = renderImageGrid(images, layout)
+	err = renderImageGrid(images, gridConfig)
 	if err != nil {
 		fmt.Printf("Error rendering image grid: %v\n", err)
 		os.Exit(1)
