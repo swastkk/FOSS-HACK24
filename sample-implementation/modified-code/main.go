@@ -1,18 +1,24 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
-	"github.com/spf13/cobra"
-	"golang.org/x/sys/unix"
-    "github.com/nfnt/resize"
-    "image"
-    "image/png"
+	"image"
+	"image/png"
+	"log"
 	"os"
 	"os/signal"
-	"syscall"
-    "path/filepath"
+	"path/filepath"
 	"strings"
-    "encoding/base64"
+	"sync"
+	"syscall"
+    "io/fs"
+
+	"github.com/eiannone/keyboard"
+	"github.com/nfnt/resize"
+	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
+	"gopkg.in/yaml.v2"
 )
 
 var rootCmd = &cobra.Command{
@@ -22,8 +28,8 @@ var rootCmd = &cobra.Command{
 }
 
 type gridConfig struct {
-    x_param int     // horizontal parameter  
-    y_param int     // vertical parameter 
+    x_param int `yaml:"xParam"`    // horizontal parameter  
+    y_param int `yaml:"yParam"`    // vertical parameter 
 }
 
 // Will contain all the window parameters 
@@ -36,21 +42,37 @@ type windowParameters struct {
 
 // Will contain Global Navigation 
 type navigationParameters struct {
-    imageIndex int // Selected image index  
     x int          // Horizontal Grid Coordinate 
     y int          // Vertical Grid Coordinate 
 }
 
+// Config struct to hold the configuration
+type Config struct {
+    gridParam gridConfig `yaml:"windowParam"`
+}
+
 var (
-	recursive bool
-	maxImages int
     globalWindowParameters windowParameters // Contains Global Level Window Parameters 
-    globalGridConfig gridConfig
+    globalConfig Config
+    globalNavigation navigationParameters
+    globalImages []string 
+    globalImagePages [][]string 
 )
 
-func init() {
-	rootCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Scan directory recursively")
-	rootCmd.Flags().IntVarP(&maxImages, "max-images", "n", 100, "Maximum number of images to display")
+// This function takes globalConfig struct and parses the YAML data 
+func loadConfig(filename string) error {
+    data, err := os.ReadFile(filename)
+    if err != nil {
+        log.Fatalf("error: %v", err)
+        return err
+    }
+    
+    err = yaml.Unmarshal(data, &globalConfig)
+    if err != nil {
+        log.Fatalf("error: %v", err)
+    }
+
+    return nil 
 }
 
 // Gets the window size and modifies the globalWindowParameters (global struct) 
@@ -94,25 +116,20 @@ func isImage(fileName string) bool {
 }
 
 // findImages recursively searches for image files in the given directory
-func discoverImages(dir string) ([]string, error) {
-	var images []string
-
-	err := filepath.Walk(dir, func(path string, info os.DirEntry, err error) error {
+func discoverImages(dir string) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-
-		if !info.IsDir() && isImage(info.Name()) {
-			images = append(images, path)
+		if !d.IsDir() && isImage(d.Name()) {
+			globalImages = append(globalImages, path)
 		}
 		return nil
 	})
-
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error walking directory: %w", err)
 	}
-
-	return images, nil
+	return nil
 }
 
 // Resizes images, return  
@@ -149,6 +166,71 @@ func printImageToKitty(encoded string, width, height int) {
     fmt.Printf("\x1b_Gf=1,t=%d,%d;x=%s\x1b\\", width, height, encoded)
 }
 
+func readKeyboardInput(navParams *navigationParameters, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	// Open the keyboard
+	if err := keyboard.Open(); err != nil {
+		log.Fatal(err)
+	}
+	defer keyboard.Close()
+
+	fmt.Println("Press 'h' to increment x, 'l' to decrement x, 'j' to increment y, 'k' to decrement y.")
+	fmt.Println("Press 'Ctrl+C' to exit.")
+
+	for {
+		// Read the key event
+		char, key, err := keyboard.GetSingleKey()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Handle the key event
+		switch char {
+		case 'h':
+			navParams.x++
+		case 'l':
+            if (navParams.x > 0) { // cursor is at left most part of the screen 
+			    navParams.x--
+            }
+		case 'j':
+			navParams.y++
+		case 'k':
+            if (navParams.y > 0) { // cursor is at the top most part of the screen  
+			    navParams.y--
+		    }
+        }
+
+		// Print the current state of navigation parameters
+		fmt.Printf("Current navigation parameters (in goroutine): %+v\n", *navParams)
+
+		// Exit the loop if 'Ctrl+C' is pressed
+		if key == keyboard.KeyCtrlC {
+			break
+		}
+	}
+}
+
+// Paginate images into slice called globalImagePages from globalImages
+func paginateImages() {
+    var xParam int = globalConfig.gridParam.x_param
+    var yParam int = globalConfig.gridParam.y_param
+
+    for i := 0; i < len(globalImages); i += xParam {
+        end := i + xParam
+        if end > len(globalImages) {
+            end = len(globalImages)
+        }
+        
+        row := globalImages[i:end]
+        globalImagePages = append(globalImagePages, row)
+        
+        if len(globalImagePages) == yParam {
+            break
+        }
+    }
+}
+
 // Routine for session - kitten will run in this space
 func session(cmd *cobra.Command, args []string) {
 
@@ -160,7 +242,7 @@ func session(cmd *cobra.Command, args []string) {
 
 	// Get directory name and discover images
 	dir := args[0]
-	images, err := discoverImages(dir)
+	err := discoverImages(dir)
 	if err != nil {
 		fmt.Printf("Error discovering images: %v\n", err)
 		os.Exit(1)
@@ -184,19 +266,48 @@ func session(cmd *cobra.Command, args []string) {
 		}
 	}()
 
+    /* Getting Keyboard Inputs into Goroutines 
+    Here, the keyboard handler with keep updating the globalNavigation and update x and y. 
+    globalNavigation contains all the global cooridinates, updated regularly and keeps the whole 
+    program aware of current state of keyboard. 
+    */ 
+    
+    var keyboardWg sync.WaitGroup
+    keyboardWg.Add(1)
+
+    go readKeyboardInput(&globalNavigation, &keyboardWg)
+
     // Till this point, WindowSize Changes would be handled and stored into globalWindowParameters 
+  
+    var config Config
 
-	err = renderImageGrid(images, gridConfig)
-	if err != nil {
-		fmt.Printf("Error rendering image grid: %v\n", err)
-		os.Exit(1)
-	}
+    /* Load system configuration from kitty.conf
+    Currently, the loadConfig is loading configurations from config.yaml, parsing can be updated later 
+    */ 
+    err = loadConfig("config.yaml")
+    if (err != nil) {
+        fmt.Printf("Error Parsing config file, exiting ....")
+        os.Exit(1)
+    }
+   
+    // if x_param or y_param are 0, exit 
+    if (config.gridParam.x_param == 0 || config.gridParam.y_param == 0) {
+        fmt.Printf("x_param or y_param set to 0, check the system config file for kitty")
+        os.Exit(1)
+    }
 
-	err = handleNavigation(images, layout)
-	if err != nil {
-		fmt.Printf("Error during navigation: %v\n", err)
-		os.Exit(1)
-	}
+    // config cannot be changed at runtime 
+	//err = renderImageGrid(images, gridConfig)
+	//if err != nil {
+	//	fmt.Printf("Error rendering image grid: %v\n", err)
+	//	os.Exit(1)
+	//}
+
+	//err = handleNavigation(images, layout)
+	//if err != nil {
+	//	fmt.Printf("Error during navigation: %v\n", err)
+	//	os.Exit(1)
+	//}
 }
 
 func main() {
